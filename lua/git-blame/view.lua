@@ -128,25 +128,19 @@ function M.format_content(info)
 
   if info.commit_hash then
     info.commit_hash = string.sub(info.commit_hash, 1, 8)
-    table.insert(content, string.format("Commit: %s", info.commit_hash))
-  end
-  if info.author then
-    table.insert(content, string.format("Author: %s <%s>", info.author, info.author_email))
-  end
-  if info.date then
-    table.insert(content, string.format("Date:   %s", info.date))
+    table.insert(content, string.format("%s %s (%s):", info.commit_hash, info.author, info.date))
   end
 
+  local need = true
   -- Append commit message lines
   for _, line in ipairs(msg_lines) do
-    table.insert(content, vim.trim(line))
-  end
-
-  -- Remove last line if it is only whitespace
-  local last_line = content[#content]
-
-  if last_line:match("^%s*$") then
-    table.remove(content)
+    if need then
+      local t = vim.trim(line)
+      if t ~= "" then
+        table.insert(content, t)
+        need = false
+      end
+    end
   end
 
   return content
@@ -161,8 +155,6 @@ end
 function M.create_window(content)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, true, content)
-
-  -- Define highlighting groups for colors
 
   vim.cmd("highlight MessengerHeadings guifg=" .. "#89b4fa")
 
