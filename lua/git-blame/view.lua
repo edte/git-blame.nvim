@@ -10,8 +10,8 @@ function M.show()
     return
   end
 
-  local content = M.format_content(info)
-  M.create_window(content)
+  local content, length = M.format_content(info)
+  M.create_window(content, length)
 end
 
 function M.commit_info()
@@ -25,8 +25,8 @@ function M.commit_info()
     return nil, err
   end
 
-  if info.commit_hash == nil then
-    info.commit_msg = "Not Committed Yet"
+  if info.commit_hash == nil or info.commit_hash == "0000000000000000000000000000000000000000" then
+    info.commit_hash = nil
     return info
   end
 
@@ -123,27 +123,51 @@ function M.commit_message(gitdir, commit_hash) -- ${func, commit_message}
 end
 
 function M.format_content(info)
+  if not info.commit_hash then
+    local content = {}
+    local t = "Not Committed Yet"
+    table.insert(content, t)
+    local length = {
+      commitAndNameEnd = 0,
+      TimeBegin = 0,
+      MessageLength = M.getLen(t),
+    }
+    return content, length
+  end
+
   local msg_lines = vim.split(info.commit_msg, "\n")
   local content = {}
 
+  local length = {
+    commitAndNameEnd = 9 + M.getLen(info.author),
+    TimeBegin = 10 + M.getLen(info.author),
+    MessageLength = 0,
+  }
+
   if info.commit_hash then
     info.commit_hash = string.sub(info.commit_hash, 1, 8)
-    table.insert(content, string.format("%s %s (%s):", info.commit_hash, info.author, info.date))
+    local s = string.format("%s %s (%s):", info.commit_hash, info.author, info.date)
+    table.insert(content, s)
+
+    length.MessageLength = math.max(length.MessageLength, M.getLen(s))
   end
 
   local need = true
-  -- Append commit message lines
+
   for _, line in ipairs(msg_lines) do
+    local t = vim.trim(line)
+
     if need then
-      local t = vim.trim(line)
       if t ~= "" then
         table.insert(content, t)
         need = false
+
+        length.MessageLength = math.max(length.MessageLength, M.getLen(t))
       end
     end
   end
 
-  return content
+  return content, length
 end
 
 function M.locate_gitdir()
@@ -152,15 +176,12 @@ function M.locate_gitdir()
   return git_dir ~= "" and vim.fn.fnamemodify(git_dir, ":p:h:h") or nil
 end
 
-function M.create_window(content)
+function M.create_window(content, length)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, true, content)
 
-  vim.cmd("highlight MessengerHeadings guifg=" .. "#89b4fa")
-
-  vim.api.nvim_buf_add_highlight(buf, -1, "MessengerHeadings", 0, 0, 7)
-  vim.api.nvim_buf_add_highlight(buf, -1, "MessengerHeadings", 1, 0, 7)
-  vim.api.nvim_buf_add_highlight(buf, -1, "MessengerHeadings", 2, 0, 5)
+  vim.api.nvim_buf_add_highlight(buf, -1, "@label", 0, 0, length.commitAndNameEnd)
+  vim.api.nvim_buf_add_highlight(buf, -1, "NvimOptionScope", 0, length.TimeBegin, -1)
 
   -- Adjust height and width based on content
   local width = 0
@@ -169,12 +190,17 @@ function M.create_window(content)
       width = #line
     end
   end
-  local height = #content
+
+  local height = 2
+
+  if length.TimeBegin == 0 and length.commitAndNameEnd == 0 then
+    height = 1
+  end
 
   local win_config = {
     relative = "cursor",
     style = "minimal",
-    width = width + 2,
+    width = length.MessageLength + 1,
     height = height,
     row = 1,
     col = 1,
@@ -187,7 +213,7 @@ function M.create_window(content)
   vim.wo[win_id].wrap = false
   vim.wo[win_id].list = false
 
-  local win_hl = "FloatBorder:MessengerBorder,FloatTitle:MessengerTitle"
+  local win_hl = "FloatBorder:@label"
   vim.wo[win_id].winhighlight = win_hl
 
   local augroup = vim.api.nvim_create_augroup("MessengerWindow" .. win_id, { clear = true })
@@ -200,6 +226,10 @@ function M.create_window(content)
     end,
     once = true,
   })
+end
+
+function M.getLen(s)
+  return vim.fn.strdisplaywidth(s)
 end
 
 return M
