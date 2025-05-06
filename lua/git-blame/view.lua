@@ -1,5 +1,19 @@
 local M = {}
 
+function M.show()
+  local info, err = M.commit_info()
+
+  if err then
+    vim.notify(err, vim.log.levels.ERROR, {
+      title = string.format("Messenger.nvim"),
+    })
+    return
+  end
+
+  local content = M.format_content(info)
+  M.create_window(content)
+end
+
 function M.commit_info()
   local gitdir = M.locate_gitdir()
   if not gitdir then
@@ -9,6 +23,11 @@ function M.commit_info()
   local info, err = M.blame_info(gitdir)
   if err then
     return nil, err
+  end
+
+  if info.commit_hash == nil then
+    info.commit_msg = "Not Committed Yet"
+    return info
   end
 
   local message, err = M.commit_message(gitdir, info.commit_hash)
@@ -22,7 +41,7 @@ function M.commit_info()
   return info
 end
 
-function M.blame_info(gitdir)
+function M.blame_info(gitdir) -- ${func, blame_info}
   local file_path = vim.fn.expand("%:p")
   local line_num = vim.api.nvim_win_get_cursor(0)[1]
 
@@ -31,34 +50,52 @@ function M.blame_info(gitdir)
   local blame_output = vim.fn.system(blame_cmd)
 
   if vim.v.shell_error ~= 0 then
-    return nil, "Error executing git blame: " .. blame_output
+    local info = {}
+    return vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info)
   end
 
   -- Parse the blame output
   local commit_hash = blame_output:match("^(%x+)")
   if not commit_hash then
-    return nil, "Failed to extract commit hash from blame output"
+    local info = {}
+    return vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info)
   end
 
   local author = blame_output:match("author%s+([^\n]+)")
   if not author then
-    return nil, "Failed to extract author from blame output"
+    local info = {}
+    return vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info)
   end
 
   local author_email = blame_output:match("author%-mail%s+<([^>]+)>")
   if not author_email then
-    return nil, "Failed to extract author email from blame output"
+    local info = {}
+    return vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info)
   end
 
   local author_time = blame_output:match("author%-time (%d+)")
   if not author_time then
-    return nil, "Failed to extract author time from blame output"
+    local info = {}
+    return vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info)
   end
 
   -- Convert author_time to a readable format
-  local date = os.date("%b %d %Y", tonumber(author_time))
+  local date = os.date("%F %H:%M", tonumber(author_time))
   if not date then
-    return nil, "Failed to convert author time to date"
+    local info = {}
+    return vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info)
   end
 
   local info = {
@@ -74,14 +111,31 @@ function M.blame_info(gitdir)
   end, info)
 end
 
+function M.commit_message(gitdir, commit_hash) -- ${func, commit_message}
+  local message_cmd = string.format("git -C %s show -s --format=%%B %s", gitdir, commit_hash)
+  local message = vim.fn.system(message_cmd)
+
+  if vim.v.shell_error ~= 0 then
+    return nil, "Error getting commit message: " .. message
+  end
+
+  return message
+end
+
 function M.format_content(info)
   local msg_lines = vim.split(info.commit_msg, "\n")
-  local content = {
-    string.format("Commit: %s", info.commit_hash),
-    string.format("Author: %s %s", info.author, info.author_email),
-    string.format("Date:   %s", info.date),
-    "",
-  }
+  local content = {}
+
+  if info.commit_hash then
+    info.commit_hash = string.sub(info.commit_hash, 1, 8)
+    table.insert(content, string.format("Commit: %s", info.commit_hash))
+  end
+  if info.author then
+    table.insert(content, string.format("Author: %s <%s>", info.author, info.author_email))
+  end
+  if info.date then
+    table.insert(content, string.format("Date:   %s", info.date))
+  end
 
   -- Append commit message lines
   for _, line in ipairs(msg_lines) do
@@ -96,17 +150,6 @@ function M.format_content(info)
   end
 
   return content
-end
-
-function M.commit_message(gitdir, commit_hash)
-  local message_cmd = string.format("git -C %s show -s --format=%%B %s", gitdir, commit_hash)
-  local message = vim.fn.system(message_cmd)
-
-  if vim.v.shell_error ~= 0 then
-    return nil, "Error getting commit message: " .. message
-  end
-
-  return message
 end
 
 function M.locate_gitdir()
@@ -165,20 +208,6 @@ function M.create_window(content)
     end,
     once = true,
   })
-end
-
-function M.show()
-  local info, err = M.commit_info()
-
-  if err then
-    vim.notify(err, vim.log.levels.ERROR, {
-      title = string.format("Messenger.nvim"),
-    })
-    return
-  end
-
-  local content = M.format_content(info)
-  M.create_window(content)
 end
 
 return M
