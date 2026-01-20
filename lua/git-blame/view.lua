@@ -221,7 +221,9 @@ function M.create_window(content, length)
   vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter" }, {
     group = augroup,
     callback = function()
-      vim.api.nvim_win_close(win_id, true)
+      if vim.api.nvim_win_is_valid(win_id) then
+        vim.api.nvim_win_close(win_id, true)
+      end
       vim.api.nvim_del_augroup_by_id(augroup)
     end,
     once = true,
