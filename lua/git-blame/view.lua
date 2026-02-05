@@ -286,8 +286,10 @@ function M.create_window(content, length)
     row = 1,
     col = 1,
     border = "single",
+    focusable = true,
   }
 
+  local origin_win = vim.api.nvim_get_current_win()
   local win_id = vim.api.nvim_open_win(buf, false, win_config)
 
   vim.wo[win_id].foldenable = false
@@ -297,15 +299,40 @@ function M.create_window(content, length)
   local win_hl = "FloatBorder:MessengerBorder"
   vim.wo[win_id].winhighlight = win_hl
 
+  vim.keymap.set("n", "q", function()
+    if vim.api.nvim_win_is_valid(win_id) then
+      vim.api.nvim_win_close(win_id, true)
+    end
+  end, { buffer = buf, nowait = true, silent = true })
+
   local augroup = vim.api.nvim_create_augroup("MessengerWindow" .. win_id, { clear = true })
 
-  vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter" }, {
+  local function close_win()
+    if vim.api.nvim_win_is_valid(win_id) then
+      vim.api.nvim_win_close(win_id, true)
+    end
+    vim.api.nvim_del_augroup_by_id(augroup)
+  end
+
+  vim.api.nvim_create_autocmd({ "InsertEnter", "CursorMoved" }, {
     group = augroup,
-    callback = function()
-      if vim.api.nvim_win_is_valid(win_id) then
-        vim.api.nvim_win_close(win_id, true)
+    callback = function(ev)
+      if ev.event == "CursorMoved" then
+        -- Defer so a mouse click can focus the float before we decide to close.
+        vim.defer_fn(function()
+          if
+            vim.api.nvim_win_is_valid(win_id)
+            and vim.api.nvim_get_current_win() == origin_win
+            and origin_win ~= win_id
+          then
+            close_win()
+          end
+        end, 0)
+        return
       end
-      vim.api.nvim_del_augroup_by_id(augroup)
+      if vim.api.nvim_get_current_win() == origin_win and origin_win ~= win_id then
+        close_win()
+      end
     end,
     once = true,
   })
