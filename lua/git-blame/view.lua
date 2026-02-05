@@ -1,5 +1,6 @@
 local M = {}
 M._message_cache = M._message_cache or {}
+M._hl_defined = M._hl_defined or false
 
 function M.show()
   M.commit_info_async(function(info, err)
@@ -250,11 +251,18 @@ function M.locate_gitdir()
 end
 
 function M.create_window(content, length)
+  if not M._hl_defined then
+    vim.api.nvim_set_hl(0, "MessengerLabel", { fg = "#82aaff" })
+    vim.api.nvim_set_hl(0, "MessengerTime", { fg = "#c099ff" })
+    vim.api.nvim_set_hl(0, "MessengerBorder", { fg = "#82aaff" })
+    M._hl_defined = true
+  end
+
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, true, content)
 
-  vim.api.nvim_buf_add_highlight(buf, -1, "@label", 0, 0, length.commitAndNameEnd)
-  vim.api.nvim_buf_add_highlight(buf, -1, "NvimOptionScope", 0, length.TimeBegin, -1)
+  vim.api.nvim_buf_add_highlight(buf, -1, "MessengerLabel", 0, 0, length.commitAndNameEnd)
+  vim.api.nvim_buf_add_highlight(buf, -1, "MessengerTime", 0, length.TimeBegin, -1)
 
   -- Adjust height and width based on content
   local width = 0
@@ -286,7 +294,7 @@ function M.create_window(content, length)
   vim.wo[win_id].wrap = false
   vim.wo[win_id].list = false
 
-  local win_hl = "FloatBorder:@label"
+  local win_hl = "FloatBorder:MessengerBorder"
   vim.wo[win_id].winhighlight = win_hl
 
   local augroup = vim.api.nvim_create_augroup("MessengerWindow" .. win_id, { clear = true })
