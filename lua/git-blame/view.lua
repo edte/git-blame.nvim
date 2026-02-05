@@ -314,7 +314,7 @@ function M.create_window(content, length)
     vim.api.nvim_del_augroup_by_id(augroup)
   end
 
-  vim.api.nvim_create_autocmd({ "InsertEnter", "CursorMoved" }, {
+  vim.api.nvim_create_autocmd({ "InsertEnter", "CursorMoved", "WinLeave" }, {
     group = augroup,
     callback = function(ev)
       if ev.event == "CursorMoved" then
@@ -325,6 +325,14 @@ function M.create_window(content, length)
             and vim.api.nvim_get_current_win() == origin_win
             and origin_win ~= win_id
           then
+            close_win()
+          end
+        end, 0)
+        return
+      end
+      if ev.event == "WinLeave" then
+        vim.defer_fn(function()
+          if vim.api.nvim_win_is_valid(win_id) and vim.api.nvim_get_current_win() ~= win_id then
             close_win()
           end
         end, 0)
