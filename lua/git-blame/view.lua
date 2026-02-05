@@ -1,125 +1,198 @@
 local M = {}
+M._message_cache = M._message_cache or {}
 
 function M.show()
-  local info, err = M.commit_info()
+  M.commit_info_async(function(info, err)
+    vim.schedule(function()
+      if err then
+        vim.notify(err, vim.log.levels.ERROR, {
+          title = string.format("Messenger.nvim"),
+        })
+        return
+      end
 
-  if err then
-    vim.notify(err, vim.log.levels.ERROR, {
-      title = string.format("Messenger.nvim"),
-    })
+      local content, length = M.format_content(info)
+      M.create_window(content, length)
+    end)
+  end)
+end
+
+function M.commit_info_async(cb)
+  local gitdir = M.locate_gitdir()
+  if not gitdir then
+    cb(nil, "Not a git repository")
     return
   end
 
-  local content, length = M.format_content(info)
-  M.create_window(content, length)
+  M.blame_info_async(gitdir, function(info, err)
+    if err then
+      cb(nil, err)
+      return
+    end
+
+    if info.commit_hash == nil or info.commit_hash == "0000000000000000000000000000000000000000" then
+      info.commit_hash = nil
+      cb(info)
+      return
+    end
+
+    local cached = M._message_cache[info.commit_hash]
+    if cached then
+      info.commit_msg = cached
+      cb(info)
+      return
+    end
+
+    M.commit_message_async(gitdir, info.commit_hash, function(message, msg_err)
+      if msg_err then
+        cb(nil, msg_err)
+        return
+      end
+      M._message_cache[info.commit_hash] = message
+      info.commit_msg = message
+      cb(info)
+    end)
+  end)
 end
 
-function M.commit_info()
-  local gitdir = M.locate_gitdir()
-  if not gitdir then
-    return nil, "Not a git repository"
+function M.run_git(args, cb)
+  if vim.system then
+    vim.system(args, { text = true }, function(obj)
+      if obj.code ~= 0 then
+        local msg = (obj.stderr and obj.stderr ~= "" and obj.stderr) or obj.stdout or "git error"
+        cb(nil, vim.trim(msg))
+      else
+        cb(obj.stdout, nil)
+      end
+    end)
+    return
   end
 
-  local info, err = M.blame_info(gitdir)
-  if err then
-    return nil, err
+  local output = {}
+  local errors = {}
+  local job_id = vim.fn.jobstart(args, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      if data then
+        for _, line in ipairs(data) do
+          if line ~= "" then
+            table.insert(output, line)
+          end
+        end
+      end
+    end,
+    on_stderr = function(_, data)
+      if data then
+        for _, line in ipairs(data) do
+          if line ~= "" then
+            table.insert(errors, line)
+          end
+        end
+      end
+    end,
+    on_exit = function(_, code)
+      local out = table.concat(output, "\n")
+      local err = table.concat(errors, "\n")
+      if code ~= 0 then
+        cb(nil, vim.trim(err ~= "" and err or out))
+      else
+        cb(out, nil)
+      end
+    end,
+  })
+
+  if job_id <= 0 then
+    cb(nil, "Failed to start git process")
   end
-
-  if info.commit_hash == nil or info.commit_hash == "0000000000000000000000000000000000000000" then
-    info.commit_hash = nil
-    return info
-  end
-
-  local message, err = M.commit_message(gitdir, info.commit_hash)
-
-  if err then
-    return nil, err
-  end
-
-  info.commit_msg = message
-
-  return info
 end
 
-function M.blame_info(gitdir) -- ${func, blame_info}
+function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
   local file_path = vim.fn.expand("%:p")
   local line_num = vim.api.nvim_win_get_cursor(0)[1]
 
-  -- Get the blame information for the current line
-  local blame_cmd = string.format("git -C %s blame -L %d,%d --porcelain %s", gitdir, line_num, line_num, file_path)
-  local blame_output = vim.fn.system(blame_cmd)
-
-  if vim.v.shell_error ~= 0 then
-    local info = {}
-    return vim.tbl_map(function(v)
-      return type(v) == "string" and vim.trim(v) or v
-    end, info)
-  end
-
-  -- Parse the blame output
-  local commit_hash = blame_output:match("^(%x+)")
-  if not commit_hash then
-    local info = {}
-    return vim.tbl_map(function(v)
-      return type(v) == "string" and vim.trim(v) or v
-    end, info)
-  end
-
-  local author = blame_output:match("author%s+([^\n]+)")
-  if not author then
-    local info = {}
-    return vim.tbl_map(function(v)
-      return type(v) == "string" and vim.trim(v) or v
-    end, info)
-  end
-
-  local author_email = blame_output:match("author%-mail%s+<([^>]+)>")
-  if not author_email then
-    local info = {}
-    return vim.tbl_map(function(v)
-      return type(v) == "string" and vim.trim(v) or v
-    end, info)
-  end
-
-  local author_time = blame_output:match("author%-time (%d+)")
-  if not author_time then
-    local info = {}
-    return vim.tbl_map(function(v)
-      return type(v) == "string" and vim.trim(v) or v
-    end, info)
-  end
-
-  -- Convert author_time to a readable format
-  local date = os.date("%F %H:%M", tonumber(author_time))
-  if not date then
-    local info = {}
-    return vim.tbl_map(function(v)
-      return type(v) == "string" and vim.trim(v) or v
-    end, info)
-  end
-
-  local info = {
-    author = author,
-    author_email = author_email,
-    commit_hash = commit_hash,
-    date = date,
+  local blame_args = {
+    "git",
+    "-C",
+    gitdir,
+    "blame",
+    "-L",
+    string.format("%d,%d", line_num, line_num),
+    "--porcelain",
+    "--",
+    file_path,
   }
 
-  -- Trim all string values in the table
-  return vim.tbl_map(function(v)
-    return type(v) == "string" and vim.trim(v) or v
-  end, info)
+  M.run_git(blame_args, function(blame_output, err)
+    if err then
+      cb(nil, "Error getting blame: " .. err)
+      return
+    end
+
+    -- Parse the blame output
+    local commit_hash = blame_output:match("^(%x+)")
+    if not commit_hash then
+      cb(nil, "Error parsing blame output")
+      return
+    end
+
+    local author = blame_output:match("author%s+([^\n]+)")
+    if not author then
+      cb(nil, "Error parsing blame author")
+      return
+    end
+
+    local author_email = blame_output:match("author%-mail%s+<([^>]+)>")
+    if not author_email then
+      cb(nil, "Error parsing blame author email")
+      return
+    end
+
+    local author_time = blame_output:match("author%-time (%d+)")
+    if not author_time then
+      cb(nil, "Error parsing blame author time")
+      return
+    end
+
+    -- Convert author_time to a readable format
+    local date = os.date("%F %H:%M", tonumber(author_time))
+    if not date then
+      cb(nil, "Error parsing blame date")
+      return
+    end
+
+    local info = {
+      author = author,
+      author_email = author_email,
+      commit_hash = commit_hash,
+      date = date,
+    }
+
+    cb(vim.tbl_map(function(v)
+      return type(v) == "string" and vim.trim(v) or v
+    end, info))
+  end)
 end
 
-function M.commit_message(gitdir, commit_hash) -- ${func, commit_message}
-  local message_cmd = string.format("git -C %s show -s --format=%%B %s", gitdir, commit_hash)
-  local message = vim.fn.system(message_cmd)
+function M.commit_message_async(gitdir, commit_hash, cb) -- ${func, commit_message}
+  local message_args = {
+    "git",
+    "-C",
+    gitdir,
+    "show",
+    "-s",
+    "--format=%B",
+    commit_hash,
+  }
 
-  if vim.v.shell_error ~= 0 then
-    return nil, "Error getting commit message: " .. message
-  end
+  M.run_git(message_args, function(message, err)
+    if err then
+      cb(nil, "Error getting commit message: " .. err)
+      return
+    end
 
-  return message
+    cb(message)
+  end)
 end
 
 function M.format_content(info)
