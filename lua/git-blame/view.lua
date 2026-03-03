@@ -245,9 +245,21 @@ function M.format_content(info)
 end
 
 function M.locate_gitdir()
+  local file_dir = vim.fn.expand("%:p:h")
+  if file_dir ~= "" then
+    local top = vim.fn.system({ "git", "-C", file_dir, "rev-parse", "--show-toplevel" })
+    if vim.v.shell_error == 0 then
+      return vim.trim(top)
+    end
+  end
+
   local current_dir = vim.fn.getcwd()
-  local git_dir = vim.fn.finddir(".git", current_dir .. ";")
-  return git_dir ~= "" and vim.fn.fnamemodify(git_dir, ":p:h:h") or nil
+  local top = vim.fn.system({ "git", "-C", current_dir, "rev-parse", "--show-toplevel" })
+  if vim.v.shell_error == 0 then
+    return vim.trim(top)
+  end
+
+  return nil
 end
 
 function M.create_window(content, length)
