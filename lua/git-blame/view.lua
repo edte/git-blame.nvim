@@ -7,7 +7,7 @@ function M.show()
     vim.schedule(function()
       if err then
         vim.notify(err, vim.log.levels.ERROR, {
-          title = string.format("Messenger.nvim"),
+          title = string.format("git-blame.nvim"),
         })
         return
       end
@@ -126,7 +126,15 @@ function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
 
   M.run_git(blame_args, function(blame_output, err)
     if err then
-      cb(nil, "Error getting blame: " .. err)
+      -- When file is not in Git, return nil commit_hash instead of error
+      -- This will trigger "Not Committed Yet" display in format_content
+      local info = {
+        author = "Unknown",
+        author_email = "unknown@example.com",
+        commit_hash = nil,
+        date = os.date("%F %H:%M"),
+      }
+      cb(info)
       return
     end
 
