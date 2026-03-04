@@ -67,13 +67,20 @@ function M.commit_info_async(gitdir, file_path, line_num, cb)
 end
 
 function M.run_git(args, cb)
+  local function invoke_cb(...)
+    local result = { ... }
+    vim.schedule(function()
+      cb((table.unpack or unpack)(result))
+    end)
+  end
+
   if vim.system then
     vim.system(args, { text = true }, function(obj)
       if obj.code ~= 0 then
         local msg = (obj.stderr and obj.stderr ~= "" and obj.stderr) or obj.stdout or "git error"
-        cb(nil, vim.trim(msg))
+        invoke_cb(nil, vim.trim(msg))
       else
-        cb(obj.stdout, nil)
+        invoke_cb(obj.stdout, nil)
       end
     end)
     return
@@ -106,15 +113,15 @@ function M.run_git(args, cb)
       local out = table.concat(output, "\n")
       local err = table.concat(errors, "\n")
       if code ~= 0 then
-        cb(nil, vim.trim(err ~= "" and err or out))
+        invoke_cb(nil, vim.trim(err ~= "" and err or out))
       else
-        cb(out, nil)
+        invoke_cb(out, nil)
       end
     end,
   })
 
   if job_id <= 0 then
-    cb(nil, "Failed to start git process")
+    invoke_cb(nil, "Failed to start git process")
   end
 end
 
