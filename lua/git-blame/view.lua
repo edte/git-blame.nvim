@@ -3,29 +3,39 @@ M._message_cache = M._message_cache or {}
 M._hl_defined = M._hl_defined or false
 
 function M.show()
-  M.commit_info_async(function(info, err)
-    vim.schedule(function()
-      if err then
-        vim.notify(err, vim.log.levels.ERROR, {
-          title = string.format("git-blame.nvim"),
+  local file_path = vim.fn.expand("%:p")
+  local line_num = vim.api.nvim_win_get_cursor(0)[1]
+
+  M.locate_gitdir_async(function(gitdir)
+    if not gitdir then
+      vim.schedule(function()
+        vim.notify("Not a git repository", vim.log.levels.ERROR, {
+          title = "git-blame.nvim",
         })
+      end)
+      return
+    end
+
+    M.commit_info_async(gitdir, file_path, line_num, function(info, err)
+      if err then
+        vim.schedule(function()
+          vim.notify(err, vim.log.levels.ERROR, {
+            title = "git-blame.nvim",
+          })
+        end)
         return
       end
 
-      local content, length = M.format_content(info)
-      M.create_window(content, length)
+      vim.schedule(function()
+        local content, length = M.format_content(info)
+        M.create_window(content, length)
+      end)
     end)
   end)
 end
 
-function M.commit_info_async(cb)
-  local gitdir = M.locate_gitdir()
-  if not gitdir then
-    cb(nil, "Not a git repository")
-    return
-  end
-
-  M.blame_info_async(gitdir, function(info, err)
+function M.commit_info_async(gitdir, file_path, line_num, cb)
+  M.blame_info_async(gitdir, file_path, line_num, function(info, err)
     if err then
       cb(nil, err)
       return
@@ -108,10 +118,7 @@ function M.run_git(args, cb)
   end
 end
 
-function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
-  local file_path = vim.fn.expand("%:p")
-  local line_num = vim.api.nvim_win_get_cursor(0)[1]
-
+function M.blame_info_async(gitdir, file_path, line_num, cb)
   local blame_args = {
     "git",
     "-C",
@@ -126,8 +133,6 @@ function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
 
   M.run_git(blame_args, function(blame_output, err)
     if err then
-      -- When file is not in Git, return nil commit_hash instead of error
-      -- This will trigger "Not Committed Yet" display in format_content
       local info = {
         author = "Unknown",
         author_email = "unknown@example.com",
@@ -138,7 +143,6 @@ function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
       return
     end
 
-    -- Parse the blame output
     local commit_hash = blame_output:match("^(%x+)")
     if not commit_hash then
       cb(nil, "Error parsing blame output")
@@ -163,7 +167,6 @@ function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
       return
     end
 
-    -- Convert author_time to a readable format
     local date = os.date("%F %H:%M", tonumber(author_time))
     if not date then
       cb(nil, "Error parsing blame date")
@@ -183,7 +186,7 @@ function M.blame_info_async(gitdir, cb) -- ${func, blame_info}
   end)
 end
 
-function M.commit_message_async(gitdir, commit_hash, cb) -- ${func, commit_message}
+function M.commit_message_async(gitdir, commit_hash, cb)
   local message_args = {
     "git",
     "-C",
@@ -202,6 +205,38 @@ function M.commit_message_async(gitdir, commit_hash, cb) -- ${func, commit_messa
 
     cb(message)
   end)
+end
+
+function M.locate_gitdir_async(cb)
+  local file_dir = vim.fn.expand("%:p:h")
+  local function find_git_from_cwd()
+    local current_dir = vim.fn.getcwd()
+    local args = { "git", "-C", current_dir, "rev-parse", "--show-toplevel" }
+    M.run_git(args, function(output, err)
+      if not err then
+        cb(vim.trim(output))
+      else
+        cb(nil)
+      end
+    end)
+  end
+
+  local function find_git_from_file_dir()
+    if file_dir ~= "" then
+      local args = { "git", "-C", file_dir, "rev-parse", "--show-toplevel" }
+      M.run_git(args, function(output, err)
+        if not err then
+          cb(vim.trim(output))
+          return
+        end
+        find_git_from_cwd()
+      end)
+      return
+    end
+    find_git_from_cwd()
+  end
+
+  find_git_from_file_dir()
 end
 
 function M.format_content(info)
@@ -252,24 +287,6 @@ function M.format_content(info)
   return content, length
 end
 
-function M.locate_gitdir()
-  local file_dir = vim.fn.expand("%:p:h")
-  if file_dir ~= "" then
-    local top = vim.fn.system({ "git", "-C", file_dir, "rev-parse", "--show-toplevel" })
-    if vim.v.shell_error == 0 then
-      return vim.trim(top)
-    end
-  end
-
-  local current_dir = vim.fn.getcwd()
-  local top = vim.fn.system({ "git", "-C", current_dir, "rev-parse", "--show-toplevel" })
-  if vim.v.shell_error == 0 then
-    return vim.trim(top)
-  end
-
-  return nil
-end
-
 function M.create_window(content, length)
   if not M._hl_defined then
     vim.api.nvim_set_hl(0, "MessengerLabel", { fg = "#82aaff" })
@@ -284,7 +301,6 @@ function M.create_window(content, length)
   vim.api.nvim_buf_add_highlight(buf, -1, "MessengerLabel", 0, 0, length.commitAndNameEnd)
   vim.api.nvim_buf_add_highlight(buf, -1, "MessengerTime", 0, length.TimeBegin, -1)
 
-  -- Adjust height and width based on content
   local width = 0
   for _, line in ipairs(content) do
     if #line > width then
@@ -338,7 +354,6 @@ function M.create_window(content, length)
     group = augroup,
     callback = function(ev)
       if ev.event == "CursorMoved" then
-        -- Defer so a mouse click can focus the float before we decide to close.
         vim.defer_fn(function()
           if
             vim.api.nvim_win_is_valid(win_id)
